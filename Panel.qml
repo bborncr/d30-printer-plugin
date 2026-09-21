@@ -250,14 +250,30 @@ Panel {
           width: parent.width
           spacing: Style.space(8)
 
-          Dropdown {
+          // Dropdown and NumberField draw their captions with different
+          // fonts and gaps, so give the dropdown a caption that mirrors
+          // NumberField's and the two controls land on the same baseline.
+          Column {
             Layout.fillWidth: true
-            showLabel: false
-            options: root.sizes
-            value: root.size
-            foreground: root.foreground
-            fontFamily: root.fontFamily
-            onChanged: function(v) { root.size = v }
+            spacing: Style.spacing.md
+
+            Text {
+              textFormat: Text.PlainText
+              text: "Size"
+              color: root.dim
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.bodySmall
+            }
+
+            Dropdown {
+              width: parent.width
+              showLabel: false
+              options: root.sizes
+              value: root.size
+              foreground: root.foreground
+              fontFamily: root.fontFamily
+              onChanged: function(v) { root.size = v }
+            }
           }
 
           NumberField {
