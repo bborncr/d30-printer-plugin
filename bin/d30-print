@@ -1,0 +1,287 @@
+#!/usr/bin/env python3
+"""Render text to a bitmap and print it on a Phomemo D30 label maker.
+
+    d30-print print   [--size 40x12] [--copies 1] [--address MAC] [--flip] -- TEXT
+    d30-print preview [--size 40x12] --out FILE.png [--flip] -- TEXT
+    d30-print image   [--size 40x12] [--copies 1] [--address MAC] FILE.png
+
+Talks Bluetooth Classic (RFCOMM serial port, channel 1) straight from the
+Python stdlib. The wire protocol is the one the Phomemo app speaks; the
+initialisation packets were captured from the Android "Print Master" app.
+"""
+
+import argparse
+import math
+import os
+import re
+import socket
+import subprocess
+import sys
+import time
+
+from PIL import Image, ImageDraw, ImageFont, ImageOps
+
+DOTS_PER_MM = 8            # 203 dpi
+HEAD_DOTS = 96             # print head is 12 mm wide -> 96 dots
+BYTES_PER_ROW = HEAD_DOTS // 8
+DEFAULT_SIZE = "40x12"
+DEVICE_NAME = "D30"
+RFCOMM_CHANNEL = 1
+
+FONT_CANDIDATES = [
+    "/usr/share/fonts/liberation/LiberationSans-Bold.ttf",
+    "/usr/share/fonts/noto/NotoSans-Bold.ttf",
+    "/usr/share/fonts/TTF/DejaVuSans-Bold.ttf",
+    "/usr/share/fonts/dejavu/DejaVuSans-Bold.ttf",
+]
+
+# Printer bring-up, one packet per write.
+INIT_PACKETS = [
+    "1f1138",
+    "1f11121f1113",
+    "1f1109",
+    "1f1111",
+    "1f1119",
+    "1f1107",
+    "1f110a1f110202",
+]
+
+
+def fail(msg, code=1):
+    print(msg, file=sys.stderr)
+    sys.exit(code)
+
+
+def parse_size(spec):
+    """'40x12' -> (length_mm, width_mm). Width is the tape width."""
+    m = re.fullmatch(r"\s*(\d+(?:\.\d+)?)\s*[xX×]\s*(\d+(?:\.\d+)?)\s*", spec or "")
+    if not m:
+        fail(f"Bad label size '{spec}', expected e.g. 40x12")
+    a, b = float(m.group(1)), float(m.group(2))
+    # Accept either order; the tape (short side) is the width.
+    length, width = max(a, b), min(a, b)
+    return length, width
+
+
+def label_canvas(spec):
+    """Pixel canvas in reading orientation: (length_px, height_px)."""
+    length_mm, width_mm = parse_size(spec)
+    length_px = int(round(length_mm * DOTS_PER_MM))
+    # The head can only burn 12 mm; wider tape just gets margins.
+    height_px = min(HEAD_DOTS, int(round(width_mm * DOTS_PER_MM)))
+    return length_px, height_px
+
+
+def find_font(path=None):
+    if path:
+        if os.path.exists(path):
+            return path
+        fail(f"Font not found: {path}")
+    for c in FONT_CANDIDATES:
+        if os.path.exists(c):
+            return c
+    try:
+        out = subprocess.run(["fc-match", "-f", "%{file}", "sans-serif:bold"],
+                             capture_output=True, text=True, timeout=5).stdout.strip()
+        if out and os.path.exists(out):
+            return out
+    except Exception:
+        pass
+    fail("No TrueType font found for rendering")
+
+
+def render_text(text, spec, font_path=None):
+    """Largest font that fits, centred, black on white, reading orientation."""
+    length_px, height_px = label_canvas(spec)
+    lines = [ln for ln in text.replace("\\n", "\n").split("\n")]
+    if not any(ln.strip() for ln in lines):
+        lines = [" "]
+    font_file = find_font(font_path)
+
+    pad_x = max(4, length_px // 24)
+    pad_y = max(2, height_px // 12)
+    box_w = length_px - 2 * pad_x
+    box_h = height_px - 2 * pad_y
+
+    def measure(size):
+        font = ImageFont.truetype(font_file, size)
+        ascent, descent = font.getmetrics()
+        line_h = ascent + descent
+        gap = max(0, size // 8)
+        widths = []
+        for ln in lines:
+            bbox = font.getbbox(ln or " ")
+            widths.append(bbox[2] - bbox[0])
+        total_h = line_h * len(lines) + gap * (len(lines) - 1)
+        return font, widths, line_h, gap, total_h
+
+    lo, hi, best = 6, box_h, None
+    while lo <= hi:
+        mid = (lo + hi) // 2
+        font, widths, line_h, gap, total_h = measure(mid)
+        if max(widths) <= box_w and total_h <= box_h:
+            best = (font, widths, line_h, gap, total_h)
+            lo = mid + 1
+        else:
+            hi = mid - 1
+    if best is None:
+        best = measure(6)
+    font, widths, line_h, gap, total_h = best
+
+    img = Image.new("L", (length_px, height_px), 255)
+    draw = ImageDraw.Draw(img)
+    y = (height_px - total_h) // 2
+    for ln, w in zip(lines, widths):
+        bbox = font.getbbox(ln or " ")
+        x = (length_px - w) // 2 - bbox[0]
+        draw.text((x, y), ln, font=font, fill=0)
+        y += line_h + gap
+    return img
+
+
+def fit_image(path, spec):
+    length_px, height_px = label_canvas(spec)
+    src = Image.open(path).convert("L")
+    src = ImageOps.contain(src, (length_px, height_px))
+    img = Image.new("L", (length_px, height_px), 255)
+    img.paste(src, ((length_px - src.width) // 2, (height_px - src.height) // 2))
+    return img
+
+
+def to_print_bitmap(img, flip=False):
+    """Rotate into feed orientation (96 wide) and threshold to 1-bit."""
+    # PIL rotates counter-clockwise. 90 puts the label's left edge at the
+    # top so it feeds out reading left-to-right when peeled the usual way.
+    rotated = img.rotate(270 if flip else 90, expand=True)
+    canvas = Image.new("L", (HEAD_DOTS, rotated.height), 255)
+    canvas.paste(rotated, ((HEAD_DOTS - rotated.width) // 2, 0))
+    return canvas.point(lambda p: 0 if p < 128 else 255, "1")
+
+
+def pack_rows(bitmap):
+    """1 bit = burn. Rows top to bottom, MSB first."""
+    w, h = bitmap.size
+    px = bitmap.load()
+    out = bytearray()
+    for y in range(h):
+        for bx in range(BYTES_PER_ROW):
+            byte = 0
+            for bit in range(8):
+                x = bx * 8 + bit
+                if x < w and px[x, y] == 0:
+                    byte |= 0x80 >> bit
+            out.append(byte)
+    return bytes(out)
+
+
+def raster_header(rows):
+    # 1F 11 24 00 · ESC @ · GS v 0 m xL xH yL yH
+    return (bytes.fromhex("1f112400") + b"\x1b\x40" + b"\x1d\x76\x30\x00"
+            + bytes([BYTES_PER_ROW & 0xFF, BYTES_PER_ROW >> 8, rows & 0xFF, rows >> 8]))
+
+
+def resolve_address(explicit=None):
+    if explicit:
+        return explicit.strip()
+    env = os.environ.get("D30_ADDRESS")
+    if env:
+        return env.strip()
+    for args in (["bluetoothctl", "devices", "Paired"], ["bluetoothctl", "devices"]):
+        try:
+            out = subprocess.run(args, capture_output=True, text=True, timeout=8).stdout
+        except Exception:
+            continue
+        for line in out.splitlines():
+            parts = line.split(maxsplit=2)
+            if len(parts) == 3 and parts[0] == "Device" and parts[2].strip().upper().startswith(DEVICE_NAME):
+                return parts[1]
+    fail("No paired D30 found. Pair it in Bluetooth settings or pass --address.")
+
+
+def send_label(address, data, copies=1, timeout=10.0):
+    sock = socket.socket(socket.AF_BLUETOOTH, socket.SOCK_STREAM, socket.BTPROTO_RFCOMM)
+    sock.settimeout(timeout)
+    try:
+        sock.connect((address, RFCOMM_CHANNEL))
+    except (OSError, socket.timeout) as e:
+        sock.close()
+        fail(f"Could not connect to D30 at {address}: {e.strerror or e}. Is it switched on?")
+    try:
+        for i in range(copies):
+            for pkt in INIT_PACKETS:
+                sock.sendall(bytes.fromhex(pkt))
+            sock.sendall(data)
+            # Let the head finish before the next job or before hanging up.
+            time.sleep(0.4 + len(data) / BYTES_PER_ROW / 400.0)
+    except (OSError, socket.timeout) as e:
+        fail(f"Lost connection to D30 while printing: {e}")
+    finally:
+        try:
+            sock.shutdown(socket.SHUT_RDWR)
+        except OSError:
+            pass
+        sock.close()
+
+
+def build_job(img, flip):
+    bitmap = to_print_bitmap(img, flip)
+    return raster_header(bitmap.height) + pack_rows(bitmap)
+
+
+def main(argv):
+    p = argparse.ArgumentParser(prog="d30-print", description=__doc__,
+                                formatter_class=argparse.RawDescriptionHelpFormatter)
+    sub = p.add_subparsers(dest="cmd", required=True)
+
+    def common(sp, printing):
+        sp.add_argument("--size", default=DEFAULT_SIZE, help="label size, LENGTHxWIDTH mm (default 40x12)")
+        sp.add_argument("--flip", action="store_true", help="rotate the label 180 degrees")
+        if printing:
+            sp.add_argument("--copies", type=int, default=1)
+            sp.add_argument("--address", help="Bluetooth MAC of the D30 (default: first paired 'D30')")
+
+    sp = sub.add_parser("print", help="print text")
+    common(sp, True)
+    sp.add_argument("--font", help="path to a .ttf")
+    sp.add_argument("text", nargs="+")
+
+    sp = sub.add_parser("preview", help="render text to a PNG without printing")
+    common(sp, False)
+    sp.add_argument("--font", help="path to a .ttf")
+    sp.add_argument("--out", required=True)
+    sp.add_argument("--scale", type=int, default=1, help="upscale factor for the PNG")
+    sp.add_argument("text", nargs="*")
+
+    sp = sub.add_parser("image", help="print an image file")
+    common(sp, True)
+    sp.add_argument("file")
+
+    a = p.parse_args(argv)
+
+    if a.cmd == "preview":
+        img = render_text(" ".join(a.text), a.size, a.font)
+        if a.flip:
+            img = img.rotate(180)
+        if a.scale > 1:
+            img = img.resize((img.width * a.scale, img.height * a.scale), Image.NEAREST)
+        tmp = a.out + ".tmp"
+        img.convert("1").save(tmp, "PNG")
+        os.replace(tmp, a.out)
+        return
+
+    if a.cmd == "print":
+        text = " ".join(a.text)
+        if not text.strip():
+            fail("Nothing to print")
+        img = render_text(text, a.size, a.font)
+    else:
+        img = fit_image(a.file, a.size)
+
+    copies = max(1, min(20, a.copies))
+    address = resolve_address(a.address)
+    send_label(address, build_job(img, a.flip), copies)
+    print(f"Printed {copies} label(s) on {address}")
+
+
+if __name__ == "__main__":
+    main(sys.argv[1:])
