@@ -9,8 +9,8 @@ import qs.Ui
 // live preview, hit Enter. Rendering and Bluetooth live in bin/d30-print.
 Panel {
   id: root
-  moduleName: "bborncr.d30-label"
-  ipcTarget: "bborncr.d30-label"
+  moduleName: "io.github.bborncr.d30-label"
+  ipcTarget: "io.github.bborncr.d30-label"
 
   readonly property color foreground: bar ? bar.foreground : Color.foreground
   readonly property string fontFamily: bar ? bar.fontFamily : Style.font.family
