@@ -1,8 +1,13 @@
 # D30 Label Printer — Omarchy shell plugin
 
-A bar widget for printing quick text labels on a Phomemo D30 label maker
-over Bluetooth. Click the tag icon (or hit a keybinding), type, watch the
-live preview, press Enter. Default label size is 40 × 12 mm.
+Printing one label on a Phomemo D30 normally means turning the printer on,
+waiting for the phone app to load, dismissing its ads, and tapping through
+three or four screens to reach a text field.
+
+This plugin replaces all of that: click the tag icon in the bar (or hit a
+keybinding), type, press Enter. A few seconds, and the phone stays in your
+pocket. A live preview shows exactly what the tape will say before it is
+committed. Default label size is 40 × 12 mm.
 
 ## Requirements
 

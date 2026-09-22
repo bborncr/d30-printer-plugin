@@ -5,14 +5,14 @@
   "version": "1.0.0",
   "author": "bborncr",
   "license": "MIT",
-  "description": "Type a label, see it, print it on a Phomemo D30 over Bluetooth. Default label 40 x 12 mm.",
+  "description": "Print a label on a Phomemo D30 in a few seconds from the bar, instead of clicking through the phone app. Type, preview, Enter.",
   "kinds": ["bar-widget"],
   "entryPoints": {
     "barWidget": "Panel.qml"
   },
   "barWidget": {
     "displayName": "D30 Label Printer",
-    "description": "Quick text labels for the Phomemo D30 label maker.",
+    "description": "Type a label and print it on a Phomemo D30 without reaching for your phone.",
     "category": "Tools",
     "allowMultiple": false,
     "defaultSection": "right",
