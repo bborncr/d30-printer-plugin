@@ -21,8 +21,10 @@ committed. Default label size is 40 × 12 mm.
   ```
 
 No extra Bluetooth libraries are needed: the driver uses the Python stdlib
-RFCOMM socket, channel 1. The plugin never uses `sudo`, never installs a
-service, and writes nothing outside `$XDG_RUNTIME_DIR` (a preview PNG).
+RFCOMM socket, channel 1. No sudo or pkexec is required, and no service is
+installed. The only file written is a preview PNG in a private 0700
+directory: `$XDG_RUNTIME_DIR/omarchy-d30/`, or `~/.cache/omarchy-d30/` when
+`XDG_RUNTIME_DIR` is unset. Never a shared directory such as `/tmp`.
 
 ## Install
 
@@ -78,7 +80,7 @@ The driver works on its own too:
 
 ```bash
 bin/d30-print print --size 40x12 --copies 2 -- "Hello"
-bin/d30-print preview --out /tmp/label.png --scale 3 -- 'Two\nlines'
+bin/d30-print preview --out ~/label.png --scale 3 -- 'Two\nlines'
 bin/d30-print image --size 40x12 logo.png
 ```
 

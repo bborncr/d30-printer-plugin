@@ -15,8 +15,10 @@ import math
 import os
 import re
 import socket
+import stat
 import subprocess
 import sys
+import tempfile
 import time
 
 from PIL import Image, ImageDraw, ImageFont, ImageOps
@@ -50,6 +52,54 @@ INIT_PACKETS = [
 def fail(msg, code=1):
     print(msg, file=sys.stderr)
     sys.exit(code)
+
+
+
+def secure_write_png(img, out_path):
+    """Save a PNG without trusting anything else in the target directory.
+
+    The temporary file is created with mkstemp, so its name is unpredictable
+    and cannot be pre-planted as a symlink pointing somewhere else. The final
+    os.replace() renames over the destination rather than following it, so a
+    symlink sitting at out_path is replaced, never written through.
+    """
+    out_path = os.path.abspath(out_path)
+    parent = os.path.dirname(out_path)
+    try:
+        os.makedirs(parent, mode=0o700, exist_ok=True)
+    except OSError as e:
+        fail(f"Cannot create {parent}: {e}")
+
+    st = os.lstat(parent)
+    if not stat.S_ISDIR(st.st_mode):
+        fail(f"Not a directory: {parent}")
+    if st.st_uid != os.geteuid():
+        fail(f"Refusing to write into a directory owned by another user: {parent}")
+
+    # An existing destination must be an ordinary file of ours. A symlink or a
+    # fifo there is someone else steering the write.
+    try:
+        dst = os.lstat(out_path)
+    except FileNotFoundError:
+        pass
+    else:
+        if not stat.S_ISREG(dst.st_mode):
+            fail(f"Refusing to overwrite a non-regular file: {out_path}")
+        if dst.st_uid != os.geteuid():
+            fail(f"Refusing to overwrite a file owned by another user: {out_path}")
+
+    fd, tmp = tempfile.mkstemp(dir=parent, prefix=".d30-", suffix=".png")
+    try:
+        with os.fdopen(fd, "wb") as fh:
+            img.save(fh, "PNG")
+        os.chmod(tmp, 0o600)
+        os.replace(tmp, out_path)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
 
 
 def parse_size(spec):
@@ -264,9 +314,7 @@ def main(argv):
             img = img.rotate(180)
         if a.scale > 1:
             img = img.resize((img.width * a.scale, img.height * a.scale), Image.NEAREST)
-        tmp = a.out + ".tmp"
-        img.convert("1").save(tmp, "PNG")
-        os.replace(tmp, a.out)
+        secure_write_png(img.convert("1"), a.out)
         return
 
     if a.cmd == "print":

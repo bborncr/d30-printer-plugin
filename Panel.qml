@@ -17,8 +17,12 @@ Panel {
   readonly property color dim: Qt.darker(foreground, 1.4)
 
   readonly property string scriptPath: Qt.resolvedUrl("bin/d30-print").toString().replace(/^file:\/\//, "")
-  readonly property string runtimeDir: String(Quickshell.env("XDG_RUNTIME_DIR") || "/tmp")
-  readonly property string previewPath: runtimeDir + "/omarchy-d30-preview.png"
+  // Never /tmp: a shared directory lets another local user plant a symlink
+  // at the preview path. Both of these are private to the user, and the
+  // driver creates the omarchy-d30 subdirectory 0700.
+  readonly property string runtimeDir: String(Quickshell.env("XDG_RUNTIME_DIR")
+      || (Quickshell.env("HOME") + "/.cache"))
+  readonly property string previewPath: runtimeDir + "/omarchy-d30/preview.png"
 
   readonly property var sizes: [
     { value: "40x12", label: "40 × 12 mm" },
