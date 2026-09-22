@@ -189,7 +189,7 @@ Panel {
 
         PanelHero {
           width: parent.width
-          title: "D30 Label"
+          title: "D30 Label Printer"
           meta: root.statusText !== "" ? root.statusText
               : (root.previewing && !root.previewReady ? "Rendering…" : "Enter prints · Esc closes")
           foreground: root.statusIsError ? (root.bar ? root.bar.urgent : Color.urgent) : root.foreground
