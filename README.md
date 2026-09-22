@@ -1,4 +1,4 @@
-# D30 Label — Omarchy shell plugin
+# D30 Label Printer — Omarchy shell plugin
 
 A bar widget for printing quick text labels on a Phomemo D30 label maker
 over Bluetooth. Click the tag icon (or hit a keybinding), type, watch the

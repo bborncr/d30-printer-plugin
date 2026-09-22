@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "id": "io.github.bborncr.d30-label",
-  "name": "D30 Label",
+  "name": "D30 Label Printer",
   "version": "1.0.0",
   "author": "bborncr",
   "license": "MIT",
@@ -11,7 +11,7 @@
     "barWidget": "Panel.qml"
   },
   "barWidget": {
-    "displayName": "D30 Label",
+    "displayName": "D30 Label Printer",
     "description": "Quick text labels for the Phomemo D30 label maker.",
     "category": "Tools",
     "allowMultiple": false,
